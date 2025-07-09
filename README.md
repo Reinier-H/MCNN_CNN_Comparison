@@ -16,6 +16,10 @@ IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing
 DOI: 10.1109/JSTARS.2021.3088228
 vol. 14, pp. 8689-8702, 2021.
 
+The HSI images and ground truth needed come from the GIC:
+https://www.ehu.eus/ccwintco/index.php/Hyperspectral_Remote_Sensing_Scenes
+
+Both the corrected IP + groundtruth, and UP + ground truth files have been used, and need to be placed within the inputData folder
 
 The both_models folder contains the code, combined from both githubs, and adjusted for our purposes
 
