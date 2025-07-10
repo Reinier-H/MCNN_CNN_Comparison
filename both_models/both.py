@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 import os
 from itertools import product
 
+#import matplotlib.pyplot as plt                                    #Uncomment this line if you intend to produce a residual map, it does require a pip install matplotlib
 
 
 def set_params(args):
@@ -115,6 +116,9 @@ def main():
     parser.add_argument('--sp_percent', default = [0.1], type = float, nargs='+')                           #A list of salt and pepper percentages can be provided
     parser.add_argument('--sp_3d', action='store_true')                                                     #When the 3d type (spectrally uncorrelated) salt and pepper needs to be tested, 
     parser.add_argument('--models', default = ["CNN"], type = str, nargs='+')                               #Set whether MCNN, CNN or both need to be tested
+    parser.add_argument('--residual_map', action = 'store_true')                                            #Set the residual map to be created for the last run of each model
+
+    
     #########################################
     parser.add_argument('--set_parameters', action='store_false', help='Set some optimal parameters')
     ############## CHANGE PARAMS ############
@@ -130,13 +134,13 @@ def main():
         print("For a tr_pixelmin above 0, splitmethod custom2 has to be used.")
         return 0
     
-    pixels, labels, num_class = \
+    rawpixels, rawlabels, num_class = \
                     mydata.loadData(args.dataset, num_components=args.components, preprocessing=args.preprocess)
     print(f"numclasses = {num_class}")
-    print(f"unique labels ={np.unique(labels)}")                                                            #Shows the number of unique labels and number of classes
-    print("Pixels shape:", pixels.shape)                                                                    #Shows whether the IP set has the proper 200 number of bands, or 220 which should be edited by user 
-    print("Ground truth shape:", labels.shape)
-    pixels, labels = mydata.createImageCubes(pixels, labels, windowSize=args.spatialsize, removeZeroLabels = True)
+    print(f"unique labels ={np.unique(rawlabels)}")                                                            #Shows the number of unique labels and number of classes
+    print("Pixels shape:", rawpixels.shape)                                                                    #Shows whether the IP set has the proper 200 number of bands, or 220 which should be edited by user 
+    print("Ground truth shape:", rawlabels.shape)
+    pixels, labels = mydata.createImageCubes(rawpixels, rawlabels, windowSize=args.spatialsize, removeZeroLabels = True)
     
     combinations = list(product(args.tr_percent, args.epochs, args.batch_size))                             #List of combinations of training percentages, epochs and batch sizes is created, preventing a triple nested loop
     
@@ -163,7 +167,7 @@ def main():
         combinations = [(sp, tr, ep, bs) for sp, (tr, ep, bs) in list(product(range(len(args.sp_percent)), combinations))]      #Due to a list of salt and pepper percentages being possible, add these to combinations
 
     print(f"combinations = {combinations}")                                                                 #Show the number of combinations, to allow the user to see the number of experiments
-
+    pixel_save = pixels
 
     for model in args.models:
         for combo in combinations:
@@ -221,7 +225,7 @@ def main():
                 rstate = args.random_state+pos if args.random_state != None else None
                 if args.dataset in ["UH", "DIP", "DUP", "DIPr", "DUPr"]:                                    #In case one is using disjointed sets
                     x_train, x_test, y_train, y_test = \
-                        mydata.load_split_data_fix(args.dataset, pixels)#, rand_state=args.random_state+pos)    
+                        mydata.load_split_data_fix(args.dataset, pixels)    
                 else:
                     if args.splitmethod == "sklearn":
                         x_train, x_test, y_train, y_test = \
@@ -275,6 +279,14 @@ def main():
                                     }
                                     )
                 print("PARAMETERS", clf.count_params())
+
+                if args.residual_map:
+                    prediction = np.argmax(clf.predict(pixel_save), axis=1)
+                    if model == "CNN":
+                        cnn_prediction = prediction
+                    else:
+                        mcnn_prediction = prediction
+
                 if args.retrain:
                     print("saving for retrain")                                                             #If we are saving for retraining, store in the proper folders
                     save_dir = f"/saved_models/{model}/{tr_percent}"
@@ -305,6 +317,32 @@ def main():
             print(f"Average AA = {np.mean(stats[:, 1])}, std = {np.std(stats[:, 1])}", file = of, flush = True)
             print(f"Average K = {np.mean(stats[:, 2])}, std = {np.std(stats[:, 2])}", file = of, flush = True)
             of.close()
+    
+    if args.residual_map and len(args.models)>1:                                                            #If the user wishes to make a residual map (do uncomment the matplotlib import at the top)
+        height, width, _ = rawpixels.shape
+        residual_map = np.zeros((height, width, 3))                                                         #Set all pixels to black, as the background
+        x_coords, y_coords = np.where(rawlabels!= 0)                                                        #Select the x and y coords for all non-background labels
+        indices = list(zip(x_coords, y_coords))
+        combinations = zip(indices, cnn_prediction, mcnn_prediction, labels)                                #Zip all the essential variables, to loop over
+        overlap_counter = 0
+        correct_count = 0
+        for (x,y), gt_val, cnn_pred, mcnn_pred in combinations:
+            cnn_correct = cnn_pred == gt_val
+            mcnn_correct = mcnn_pred == gt_val
+
+            if (cnn_correct and mcnn_correct):                                                              #If both models produce the correct result, turn the pixel white
+                correct_count+=1
+                residual_map[x,y] = (1,1,1)
+            elif cnn_correct:                                                                               #Otherwise, if the CNN was correct, the MCNN was wrong, and color the pixel red
+                residual_map[x,y] = (1,0,0)
+            elif mcnn_correct:
+                residual_map[x,y] = (0,0,1)                                                                 #Likewise, is the MCNN was correct, the CNN was wrong, color the pixel blue
+            else:
+                residual_map[x,y] = (0,1,0)                                                                 #If both models are wrong, we have overlap, and make the pixel green
+                overlap_counter += 1
+        stringTimeEnd = timeEnd.strftime('%H_%M_%S')
+        plt.imsave(f"residual_map_{stringTimeEnd}_CNN=Blue_MCNN=Red_Both=Green_Overlap={overlap_counter}.png", residual_map)        #Store image, the OA and AA for the image will be stored in the usual way
+        print(f"correct: {correct_count}")
 
 
 if __name__ == '__main__':
